@@ -114,7 +114,7 @@ export default function App() {
           <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: "20px" }}>
             <div style={{ background: "#1a1208", border: "1px solid rgba(201,168,76,0.4)", borderRadius: "16px", padding: "48px", maxWidth: "480px", width: "100%", textAlign: "center" }}>
               <div style={{ fontSize: "40px", marginBottom: "16px" }}>✦</div>
-              <h2 style={{ font"Georgia, serif", fontSize: "28px", fontWeight: "300", marginBottom: "12px" }}>You have used your 3 free listings</h2>
+              <h2 style={{ fontFamily: "Georgia, serif", fontSize: "28px", fontWeight: "300", marginBottom: "12px" }}>You have used your 3 free listings</h2>
               <p style={{ color: "#a09880", marginBottom: "32px" }}>Upgrade to Propcraft Pro for unlimited listings at $29/month.</p>
               <button onClick={handleCheckout} disabled={checkoutLoading} style={{ width: "100%", padding: "16px", background: "linear-gradient(135deg, #c9a84c, #e8c96d)", color: "#0a0a0a", border: "none", borderRadius: "8px", fontSize: "16px", fontWeight: "600", cursor: "pointer", marginBottom: "12px" }}>
                 {checkoutLoading ? "Redirecting..." : "Upgrade to Pro — $29/month"}
@@ -124,7 +124,7 @@ export default function App() {
           </div>
         )}
 
-        <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(201,168,76,0.15)", borderRadius: "16", padding: "40px", marginBottom: "32px" }}>
+        <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(201,168,76,0.15)", borderRadius: "16px", padding: "40px", marginBottom: "32px" }}>
           <h2 style={{ fontSize: "11px", letterSpacing: "3px", color: "#c9a84c", textTransform: "uppercase", marginBottom: "28px" }}>Property Details</h2>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "16px" }}>
             <div>
@@ -176,7 +176,7 @@ export default function App() {
               <h2 style={{ fontSize: "11px", letterSpacing: "3px", color: "#c9a84c", textTransform: "uppercase", margin: 0 }}>Generated Listing</h2>
               <button onClick={copyToClipboard} style={{ padding: "8px 20px", background: copied ? "rgba(201,168,76,0.2)" : "transparent", border: "1px solid rgba(201,168,76,0.4)", borderRadius: "6px", color: "#c9a84c", cursor: "pointer", fontSize: "13px" }}>{copied ? "✓ Copied!" : "Copy"}</button>
             </div>
-            <style={{ lineHeight: "1.8", fontSize: "16px", color: "#e8e0d0", whiteSpace: "pre-wrap" }}>{listing}</div>
+            <div style={{ lineHeight: "1.8", fontSize: "16px", color: "#e8e0d0", whiteSpace: "pre-wrap" }}>{listing}</div>
           </div>
         )}
 
