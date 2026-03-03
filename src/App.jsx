@@ -116,7 +116,7 @@ export default function App() {
               <div style={{ fontSize: "40px", marginBottom: "16px" }}>✦</div>
               <h2 style={{ fontFamily: "Georgia, serif", fontSize: "28px", fontWeight: "300", marginBottom: "12px" }}>You have used your 3 free listings</h2>
               <p style={{ color: "#a09880", marginBottom: "32px" }}>Upgrade to Propcraft Pro for unlimited listings at $29/month.</p>
-              <button onClick={handleCheckout} disabled={checkoutLoading} style={{ width: "100%", padding: "16px", background: "linear-gradient(135deg, #c9a84c, #e8c96d)", color: "#0a0a0a", border: "none", borderRadius: "8px", fontSize: "16px", fontWeight: "600", cursor: "pointer", marginBottom: "12px" }}>
+              <button onClick={() => window.open("https://buy.stripe.com/9B6aEY7Ym55c6Rud4z9oc00", "_blank")} disabled={checkoutLoading} style={{ width: "100%", padding: "16px", background: "linear-gradient(135deg, #c9a84c, #e8c96d)", color: "#0a0a0a", border: "none", borderRadius: "8px", fontSize: "16px", fontWeight: "600", cursor: "pointer", marginBottom: "12px" }}>
                 {checkoutLoading ? "Redirecting..." : "Upgrade to Pro — $29/month"}
               </button>
               <button onClick={() => setShowPaywall(false)} style={{ background: "none", border: "none", color: "#a09880", cursor: "pointer", fontSize: "14px" }}>Maybe later</button>
