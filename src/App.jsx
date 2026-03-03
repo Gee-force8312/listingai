@@ -1,317 +1,189 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { loadStripe } from "@stripe/stripe-js";
 
-const SYSTEM_PROMPT = `You are an elite real estate copywriter with 20 years of experience writing property listings that sell homes faster and above asking price. 
+const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY);
+const FREE_LISTING_LIMIT = 3;
+const USAGE_KEY = "propcraft_usage";
 
-Your listings are:
-- Emotionally compelling and paint a vivid picture of lifestyle
-- SEO-optimised with natural keyword placement
-- Professionally structured: attention-grabbing headline, immersive opening paragraph, key features, neighbourhood appeal, and a closing call to action
-- Tailored to the requested tone (Luxury, Friendly/Family, or Professional/Neutral)
-- Between 150-250 words — punchy, not padded
-
-Never use clichés like "must see!", "gem", "cozy", or "motivated seller".
-Never use filler phrases. Every sentence must earn its place.
-Output ONLY the listing. No preamble, no explanation.`;
-
-function buildUserPrompt(form) {
-  return `Write a property listing with the following details:
-
-Property Type: ${form.propertyType}
-Bedrooms: ${form.bedrooms}
-Bathrooms: ${form.bathrooms}
-Key Features: ${form.features}
-Location / Neighbourhood: ${form.neighbourhood}
-Price (optional): ${form.price || "not disclosed"}
-Tone: ${form.tone}
-
-Generate a complete, professional real estate listing ready to publish.`;
+function getUsageCount() {
+  const usage = localStorage.getItem(USAGE_KEY);
+  return usage ? parseInt(usage) : 0;
 }
 
-export default function ListingAI() {
-  const [form, setForm] = useState({
-    propertyType: "House",
-    bedrooms: "3",
-    bathrooms: "2",
-    features: "",
-    neighbourhood: "",
-    price: "",
-    tone: "Professional",
-  });
+function incrementUsage() {
+  const current = getUsageCount();
+  localStorage.setItem(USAGE_KEY, current + 1);
+  return current + 1;
+}
+
+export default function App() {
+  const [formData, setFormData] = useState({ propertyType: "House", bedrooms: "", bathrooms: "", features: "", location: "", price: "", tone: "Professional" });
   const [listing, setListing] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [usageCount, setUsageCount] = useState(0);
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
 
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+  useEffect(() => {
+    setUsageCount(getUsageCount());
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("success") === "true") {
+      localStorage.setItem(USAGE_KEY, "999");
+      setUsageCount(999);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
+  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+
+  const handleCheckout = async () => {
+    setCheckoutLoading(true);
+    try {
+      const stripe = await stripePromise;
+      await stripe.redirectToCheckout({
+        lineItems: [{ price: import.meta.env.VITE_STRIPE_PRICE_ID, quantity: 1 }],
+        mode: "subscription",
+        successUrl: window.location.origin + "?success=true",
+        cancelUrl: window.location.origin + "?canceled=true",
+      });
+    } catch (err) {
+      setError("Payment setup failed. Please try again.");
+      setCheckoutLoading(false);
+    }
   };
 
   const generateListing = async () => {
-    if (!form.features || !form.neighbourhood) {
-      setError("Please fill in Key Features and Neighbourhood.");
+    if (!formData.bedrooms || !formData.bathrooms || !formData.location) {
+      setError("Please fill in bedrooms, bathrooms, and location.");
       return;
     }
-    setError("");
+    const currentUsage = getUsageCount();
+    if (currentUsage >= FREE_LISTING_LIMIT) {
+      setShowPaywall(true);
+      return;
+    }
     setLoading(true);
+    setError("");
     setListing("");
-
+    const prompt = "Write a compelling real estate listing.\nType: " + formData.propertyType + "\nBeds: " + formData.bedrooms + "\nBaths: " + formData.bathrooms + "\nFeatures: " + formData.features + "\nLocation: " + formData.location + "\nPrice: " + formData.price + "\nTone: " + formData.tone + "\n\nStart with a headline. Write 2-3 paragraphs. Publication-ready copy only.";
     try {
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "x-api-key": import.meta.env.VITE_ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: buildUserPrompt(form) }],
-        }),
+        headers: { "Content-Type": "application/json", "x-api-key": import.meta.env.VITE_ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1024, messages: [{ role: "user", content: prompt }] }),
       });
+      if (!response.ok) throw new Error("API failed");
       const data = await response.json();
-      const text = data.content?.map((c) => c.text || "").join("") || "";
-      if (!text) throw new Error("No response received.");
-      setListing(text);
+      setListing(data.content[0].text);
+      const newCount = incrementUsage();
+      setUsageCount(newCount);
     } catch (err) {
-      setError("Something went wrong. Please try again.");
+      setError("Failed to generate listing. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(listing);
+  const copyToClipboard = async () => {
+    await navigator.clipboard.writeText(listing);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const remainingFree = Math.max(0, FREE_LISTING_LIMIT - usageCount);
+  const isPro = usageCount >= 999;
+
   return (
-    <div style={{ fontFamily: "'Georgia', serif", minHeight: "100vh", background: "#0f0e0c", color: "#f0ece4" }}>
-      {/* Header */}
-      <div style={{ borderBottom: "1px solid #2a2820", padding: "28px 40px", display: "flex", alignItems: "center", gap: 14 }}>
-        <div style={{ width: 36, height: 36, background: "#c9a84c", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: 18, color: "#0f0e0c" }}>L</div>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: "bold", letterSpacing: 1, color: "#f0ece4" }}>ListingAI</div>
-          <div style={{ fontSize: 12, color: "#7a7060", letterSpacing: 2, textTransform: "uppercase" }}>Property Listing Generator</div>
+    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #0a0a0a 0%, #1a1208 50%, #0a0a0a 100%)", color: "#f5f0e8", fontFamily: "'DM Sans', sans-serif", padding: "40px 20px" }}>
+      <div style={{ maxWidth: "800px", margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: "48px" }}>
+          <div style={{ fontSize: "13px", letterSpacing: "4px", color: "#c9a84c", marginBottom: "16px", textTransform: "uppercase" }}>AI-Powered For Real Estate Professionals</div>
+          <h1 style={{ fontSize: "clamp(36px, 6vw, 64px)", fontWeight: "300", margin: "0 0 16px", fontFamily: "Georgia, serif" }}>Prop<span style={{ color: "#c9a84c" }}>craft</span></h1>
+          <p style={{ color: "#a09880", fontSize: "17px", margin: "0" }}>Professional property listings in seconds</p>
+          {!isPro && (
+            <div style={{ display: "inline-block", marginTop: "16px", padding: "8px 20px", background: remainingFree > 0 ? "rgba(201,168,76,0.1)" : "rgba(255,80,80,0.1)", border: "1px solid " + (remainingFree > 0 ? "rgba(201,168,76,0.3)" : "rgba(255,80,80,0.3)"), borderRadius: "20px", fontSize: "13px", color: remainingFree > 0 ? "#c9a84c" : "#ff8080" }}>
+              {remainingFree > 0 ? remainingFree + " free listing" + (remainingFree !== 1 ? "s" : "") + " remaining" : "Free listings used — upgrade to continue"}
+            </div>
+          )}
+          {isPro && <div style={{ display: "inline-block", marginTop: "16px", padding: "8px 20px", background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.3)", borderRadius: "20px", fontSize: "13px", color: "#c9a84c" }}>✦ Pro Member — Unlimited Listings</div>}
         </div>
-      </div>
 
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "48px 24px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40 }}>
+        {showPaywall && (
+          <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: "20px" }}>
+            <div style={{ background: "#1a1208", border: "1px solid rgba(201,168,76,0.4)", borderRadius: "16px", padding: "48px", maxWidth: "480px", width: "100%", textAlign: "center" }}>
+              <div style={{ fontSize: "40px", marginBottom: "16px" }}>✦</div>
+              <h2 style={{ font"Georgia, serif", fontSize: "28px", fontWeight: "300", marginBottom: "12px" }}>You have used your 3 free listings</h2>
+              <p style={{ color: "#a09880", marginBottom: "32px" }}>Upgrade to Propcraft Pro for unlimited listings at $29/month.</p>
+              <button onClick={handleCheckout} disabled={checkoutLoading} style={{ width: "100%", padding: "16px", background: "linear-gradient(135deg, #c9a84c, #e8c96d)", color: "#0a0a0a", border: "none", borderRadius: "8px", fontSize: "16px", fontWeight: "600", cursor: "pointer", marginBottom: "12px" }}>
+                {checkoutLoading ? "Redirecting..." : "Upgrade to Pro — $29/month"}
+              </button>
+              <button onClick={() => setShowPaywall(false)} style={{ background: "none", border: "none", color: "#a09880", cursor: "pointer", fontSize: "14px" }}>Maybe later</button>
+            </div>
+          </div>
+        )}
 
-        {/* LEFT: Form */}
-        <div>
-          <h2 style={{ fontSize: 13, letterSpacing: 3, textTransform: "uppercase", color: "#c9a84c", marginBottom: 28, fontFamily: "sans-serif" }}>Property Details</h2>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-
-            {/* Property Type */}
+        <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(201,168,76,0.15)", borderRadius: "16", padding: "40px", marginBottom: "32px" }}>
+          <h2 style={{ fontSize: "11px", letterSpacing: "3px", color: "#c9a84c", textTransform: "uppercase", marginBottom: "28px" }}>Property Details</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px", marginBottom: "16px" }}>
             <div>
-              <label style={labelStyle}>Property Type</label>
-              <select name="propertyType" value={form.propertyType} onChange={handleChange} style={inputStyle}>
-                {["House", "Apartment", "Condo", "Townhouse", "Villa", "Studio", "Land"].map(t => (
-                  <option key={t}>{t}</option>
-                ))}
+              <label style={{ display: "block", fontSize: "11px", letterSpacing: "2px", color: "#c9a84c", textTransform: "uppercase", marginBottom: "8px" }}>Type</label>
+              <select name="propertyType" value={formData.propertyType} onChange={handleChange} style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(201,168,76,0.2)", borderRadius: "8px", color: "#f5f0e8", fontSize: "15px" }}>
+                {["House","Apartment","Townhouse","Villa","Studio","Penthouse","Land"].map(t => <option key={t} value={t} style={{ background: "#1a1208" }}>{t}</option>)}
               </select>
             </div>
-
-            {/* Beds / Baths */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <div>
-                <label style={labelStyle}>Bedrooms</label>
-                <select name="bedrooms" value={form.bedrooms} onChange={handleChange} style={inputStyle}>
-                  {["Studio", "1", "2", "3", "4", "5", "6+"].map(n => <option key={n}>{n}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={labelStyle}>Bathrooms</label>
-                <select name="bathrooms" value={form.bathrooms} onChange={handleChange} style={inputStyle}>
-                  {["1", "1.5", "2", "2.5", "3", "4+"].map(n => <option key={n}>{n}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {/* Features */}
             <div>
-              <label style={labelStyle}>Key Features <span style={{ color: "#c9a84c" }}>*</span></label>
-              <textarea
-                name="features"
-                value={form.features}
-                onChange={handleChange}
-                placeholder="e.g. Renovated kitchen, hardwood floors, rooftop terrace, city views, double garage..."
-                rows={3}
-                style={{ ...inputStyle, resize: "vertical" }}
-              />
+              <label style={{ display: "block", fontSize: "11px", letterSpacing: "2px", color: "#c9a84c", textTransform: "uppercase", marginBottom: "8px" }}>Bedrooms</label>
+              <input type="number" name="bedrooms" value={formData.bedrooms} onChange={handleChange} placeholder="4" style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(201,168,76,0.2)", borderRadius: "8px", color: "#f5f0e8", fontSize: "15px", boxSizing: "border-box" }} />
             </div>
-
-            {/* Neighbourhood */}
             <div>
-              <label style={labelStyle}>Neighbourhood / Location <span style={{ color: "#c9a84c" }}>*</span></label>
-              <input
-                name="neighbourhood"
-                value={form.neighbourhood}
-                onChange={handleChange}
-                placeholder="e.g. Paddington, Sydney — close to cafes, parks & transport"
-                style={inputStyle}
-              />
+              <label style={{ display: "block", fontSize: "11px", letterSpacing: "2px", color: "#c9a84c", textTransform: "uppercase", marginBottom: "8px" }}>Bathrooms</label>
+              <input type="number" name="bathrooms" value={formData.bathrooms} onChange={handleChange} placeholder="2" style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(201,168,76,0.2)", borderRadius: "8px", color: "#f5f0e8", fontSize: "15px", boxSizing: "border-box" }} />
             </div>
-
-            {/* Price */}
-            <div>
-              <label style={labelStyle}>Asking Price <span style={{ color: "#4a4840", fontSize: 11 }}>(optional)</span></label>
-              <input
-                name="price"
-                value={form.price}
-                onChange={handleChange}
-                placeholder="e.g. $850,000 or Offers over $1.2M"
-                style={inputStyle}
-              />
-            </div>
-
-            {/* Tone */}
-            <div>
-              <label style={labelStyle}>Tone & Style</label>
-              <div style={{ display: "flex", gap: 10 }}>
-                {["Professional", "Luxury", "Friendly"].map(t => (
-                  <button
-                    key={t}
-                    onClick={() => setForm({ ...form, tone: t })}
-                    style={{
-                      flex: 1,
-                      padding: "10px 0",
-                      border: form.tone === t ? "1px solid #c9a84c" : "1px solid #2a2820",
-                      background: form.tone === t ? "#1e1c18" : "transparent",
-                      color: form.tone === t ? "#c9a84c" : "#7a7060",
-                      borderRadius: 6,
-                      cursor: "pointer",
-                      fontSize: 13,
-                      fontFamily: "sans-serif",
-                      transition: "all 0.2s",
-                    }}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {error && <div style={{ color: "#e07060", fontSize: 13, fontFamily: "sans-serif" }}>{error}</div>}
-
-            {/* Generate Button */}
-            <button
-              onClick={generateListing}
-              disabled={loading}
-              style={{
-                padding: "16px",
-                background: loading ? "#2a2820" : "#c9a84c",
-                color: loading ? "#7a7060" : "#0f0e0c",
-                border: "none",
-                borderRadius: 8,
-                fontSize: 15,
-                fontWeight: "bold",
-                fontFamily: "sans-serif",
-                cursor: loading ? "not-allowed" : "pointer",
-                letterSpacing: 1,
-                transition: "all 0.2s",
-                marginTop: 4,
-              }}
-            >
-              {loading ? "✦ Generating..." : "✦ Generate Listing"}
-            </button>
           </div>
+          <div style={{ marginBottom: "16px" }}>
+            <label style={{ display: "block", fontSize: "11px", letterSpacing: "2px", color: "#c9a84c", textTransform: "uppercase", marginBottom: "8px" }}>Key Features</label>
+            <input type="text" name="features" value={formData.features} onChange={handleChange} placeholder="Ocean views, renovated kitchen, double garage..." style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(201,168,76,0.2)", borderRadius: "8px", color: "#f5f0e8", fontSize: "15px", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "11px", letterSpacing: "2px", color: "#c9a84c", textTransform: "uppercase", marginBottom: "8px" }}>Location</label>
+              <input type="text" name="location" value={formData.location} onChange={handleChange} placeholder="Bondi Beach, Sydney" style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(201,168,76,0.2)", borderRadius: "8px", color: "#f5f0e8", fontSize: "15px", boxSizing: "border-box" }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: "11px", letterSpacing: "2px", color: "#c9a84c", textTransform: "uppercase", marginBottom: "8px" }}>Asking Price (optional)</label>
+              <input type="text" name="price" value={formData.price} onChange={handleChange} placeholder="$1,850,000" style={{ width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(201,168,76,0.2)", borderRadius: "8px", color: "#f5f0e8", fontSize: "15px", boxSizing: "border-box" }} />
+            </div>
+          </div>
+          <div style={{ marginBottom: "28px" }}>
+            <label style={{ display: "block", fontSize: "11px", letterSpacing: "2px", color: "#c9a84c", textTransform: "uppercase", marginBottom: "12px" }}>Tone</label>
+            <div style={{ display: "flex", gap: "12px" }}>
+              {["Professional","Luxury","Friendly"].map(tone => (
+                <button key={tone} onClick={() => setFormData({ ...formData, tone })} style={{ flex: 1, padding: "12px", borderRadius: "8px", cursor: "pointer", fontSize: "14px", background: formData.tone === tone ? "rgba(201,168,76,0.15)" : "rgba(255,255,255,0.03)", border: "1px solid " + (formData.tone === tone ? "rgba(201,168,76,0.6)" : "rgba(201,168,76,0.15)"), color: formData.tone === tone ? "#c9a84c" : "#a09880" }}>{tone}</button>
+              ))}
+            </div>
+          </div>
+          <button onClick={generateListing} disabled={loading} style={{ width: "100%", padding: "18px", background: loading ? "rgba(201,168,76,0.3)" : "linear-gradient(135deg, #c9a84c, #e8c96d)", color: loading ? "#a09880" : "#0a0a0a", border: "none", borderRadius: "8px", fontSize: "16px", fontWeight: "600", cursor: loading ? "not-allowed" : "pointer" }}>
+            {loading ? "Generating..." : "✦ Generate Listing"}
+          </button>
+          {error && <p style={{ color: "#ff8080", marginTop: "12px", fontSize: "14px" }}>{error}</p>}
         </div>
 
-        {/* RIGHT: Output */}
-        <div>
-          <h2 style={{ fontSize: 13, letterSpacing: 3, textTransform: "uppercase", color: "#c9a84c", marginBottom: 28, fontFamily: "sans-serif" }}>Generated Listing</h2>
-
-          <div style={{
-            minHeight: 480,
-            background: "#17150f",
-            border: "1px solid #2a2820",
-            borderRadius: 10,
-            padding: 28,
-            position: "relative",
-          }}>
-            {!listing && !loading && (
-              <div style={{ color: "#3a3830", fontSize: 15, lineHeight: 1.8, fontStyle: "italic" }}>
-                Your professional property listing will appear here. Fill in the details and click Generate.
-              </div>
-            )}
-
-            {loading && (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 400, gap: 16 }}>
-                <div style={{ width: 40, height: 40, border: "2px solid #2a2820", borderTop: "2px solid #c9a84c", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
-                <div style={{ color: "#7a7060", fontSize: 13, fontFamily: "sans-serif", letterSpacing: 2 }}>CRAFTING YOUR LISTING...</div>
-              </div>
-            )}
-
-            {listing && (
-              <>
-                <div style={{ fontSize: 15, lineHeight: 1.9, color: "#e0dcd4", whiteSpace: "pre-wrap" }}>
-                  {listing}
-                </div>
-                <button
-                  onClick={copyToClipboard}
-                  style={{
-                    marginTop: 24,
-                    padding: "10px 20px",
-                    background: copied ? "#2a4a2a" : "#1e1c18",
-                    color: copied ? "#6abf6a" : "#c9a84c",
-                    border: `1px solid ${copied ? "#6abf6a" : "#c9a84c"}`,
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    fontSize: 13,
-                    fontFamily: "sans-serif",
-                    letterSpacing: 1,
-                    transition: "all 0.3s",
-                  }}
-                >
-                  {copied ? "✓ Copied!" : "Copy to Clipboard"}
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* Tip box */}
-          <div style={{ marginTop: 20, padding: "16px 20px", background: "#17150f", border: "1px solid #2a2820", borderRadius: 8 }}>
-            <div style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#c9a84c", marginBottom: 8, fontFamily: "sans-serif" }}>Pro Tip</div>
-            <div style={{ fontSize: 13, color: "#7a7060", lineHeight: 1.7, fontFamily: "sans-serif" }}>
-              The more detail you add to Key Features, the better your listing. Include unique selling points, recent renovations, and lifestyle benefits.
+        {listing && (
+          <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(201,168,76,0.15)", borderRadius: "16px", padding: "40px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+              <h2 style={{ fontSize: "11px", letterSpacing: "3px", color: "#c9a84c", textTransform: "uppercase", margin: 0 }}>Generated Listing</h2>
+              <button onClick={copyToClipboard} style={{ padding: "8px 20px", background: copied ? "rgba(201,168,76,0.2)" : "transparent", border: "1px solid rgba(201,168,76,0.4)", borderRadius: "6px", color: "#c9a84c", cursor: "pointer", fontSize: "13px" }}>{copied ? "✓ Copied!" : "Copy"}</button>
             </div>
+            <style={{ lineHeight: "1.8", fontSize: "16px", color: "#e8e0d0", whiteSpace: "pre-wrap" }}>{listing}</div>
           </div>
+        )}
+
+        <div style={{ textAlign: "center", marginTop: "48px", color: "#4a4035", fontSize: "13px" }}>
+          <a href="https://propcraft.co" style={{ color: "#4a4035", textDecoration: "none" }}>propcraft.co</a> · Built for real estate professionals
         </div>
       </div>
-
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        select option { background: #1e1c18; color: #f0ece4; }
-      `}</style>
     </div>
   );
 }
-
-const labelStyle = {
-  display: "block",
-  fontSize: 11,
-  letterSpacing: 2,
-  textTransform: "uppercase",
-  color: "#7a7060",
-  marginBottom: 8,
-  fontFamily: "sans-serif",
-};
-
-const inputStyle = {
-  width: "100%",
-  padding: "12px 14px",
-  background: "#17150f",
-  border: "1px solid #2a2820",
-  borderRadius: 6,
-  color: "#f0ece4",
-  fontSize: 14,
-  fontFamily: "Georgia, serif",
-  boxSizing: "border-box",
-  outline: "none",
-};
